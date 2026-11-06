@@ -155,10 +155,20 @@ def cmd_replay(args, cfg) -> int:
     with open(args.trace) as fh:
         jobs = replay.read_trace(fh.read())
     report = replay.run(Kubectl(args.context), cfg, jobs, speed=args.speed, poll_s=args.poll)
+    criteria = None
+    if args.criteria:
+        with open(args.criteria) as fh:
+            criteria = yaml.safe_load(fh)
+    report["adr_0004"] = replay.evaluate(report, criteria)
     print(json.dumps(report, indent=2))
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(report, fh, indent=2)
+    verdict = report["adr_0004"]
+    for name, c in verdict["checks"].items():
+        print(f"{'PASS' if c['pass'] else 'FAIL'}  {name} = {c['value']} (target {c['target']})", file=sys.stderr)
+    if args.check and not verdict["pass"]:
+        return 1
     return 0
 
 
@@ -207,6 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--speed", type=float, default=600, help="simulated seconds per real second")
     s.add_argument("--poll", type=float, default=5, help="real seconds between polls")
     s.add_argument("--out", help="write the JSON report here too")
+    s.add_argument("--criteria", help="YAML overriding the ADR 0004 pass criteria")
+    s.add_argument("--check", action="store_true", help="exit 1 if the ADR 0004 criteria fail")
     s.set_defaults(fn=cmd_replay)
     return p
 

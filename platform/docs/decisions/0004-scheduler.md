@@ -27,7 +27,7 @@ Run `sim/smoke.sh` and a full-week replay on the simulation cluster:
 
 ```bash
 gpu trace --jobs 300 --days 7 > week.csv        # or a real week from Phase 0 logs
-gpu --context kind-gpu-sim replay week.csv --speed 600 --out replay-report.json
+gpu --context kind-gpu-sim replay week.csv --speed 600 --out replay-report.json --check
 ```
 
 Pass criteria (agree before running; defaults shown):
@@ -40,7 +40,20 @@ Pass criteria (agree before running; defaults shown):
 | Jobs never admitted | 0 |
 | Evictions of non-preemptible jobs by borrowing | 0 |
 
+The replay scores itself against this table (`adr_0004` in the report; `--check`
+exits non-zero on a fail; `--criteria FILE.yaml` overrides the targets if a
+different set is agreed). Allocation counts only simulated time when a job is
+waiting. A borrowing eviction is a `Preempted` condition with reason
+`InCohortReclaimWhileBorrowing` on a `high` or `standard` job.
+
 Then confirm on real GPUs (week 9 smoke, weeks 10-12 multi-node).
+
+## Findings so far
+
+- 2026-11-06: Kueue v0.19.2 stores `kueue.x-k8s.io/v1beta2` and marks `v1beta1`
+  deprecated. Our rendered objects (`cluster/kueue/`) and the controller
+  `Configuration` still use `v1beta1`. They need the controller's conversion
+  webhook to apply, and should move to `v1beta2` before the pin is accepted.
 
 ## Revisit if
 

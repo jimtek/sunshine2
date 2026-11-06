@@ -25,6 +25,18 @@ from .spec import JobSpec
 
 SIM_IMAGE = "public.ecr.aws/docker/library/busybox:1.36"
 
+# ADR 0004 pass criteria (defaults agreed before running). Override with
+# `gpu replay --criteria FILE.yaml` if a different set is agreed.
+CRITERIA = {
+    "partial_placements_max": 0,
+    "p90_wait_standard_h_max": 4.0,
+    "allocation_ratio_busy_min": 0.85,
+    "never_admitted_max": 0,
+    "nonpreemptible_borrow_evictions_max": 0,
+}
+# Kueue Preempted-condition reason for a borrower preempting a workload.
+BORROW_PREEMPTION_REASONS = {"InCohortReclaimWhileBorrowing"}
+
 
 @dataclass
 class TraceJob:
@@ -93,6 +105,7 @@ class JobState:
     rejected: str | None = None
     evictions: int = 0
     seen_evictions: set = field(default_factory=set)
+    eviction_reasons: list = field(default_factory=list)
     partial_polls: int = 0
     partial: bool = False
 
@@ -104,6 +117,8 @@ class Tracker:
         self.states = {j.id: JobState(j) for j in jobs}
         self.capacity = capacity_gpus
         self.gpu_seconds = 0.0
+        self.busy_seconds = 0.0         # sim seconds with at least one job waiting
+        self.busy_gpu_seconds = 0.0     # GPU-seconds allocated during those seconds
         self.last_now = 0.0
 
     def due(self, now: float) -> list[JobState]:
@@ -116,6 +131,8 @@ class Tracker:
         dt = now - self.last_now
         self.last_now = now
         done = []
+        step_gpus = 0
+        waiting = False
         for s in self.states.values():
             if s.submitted_at is None or s.finished_at is not None or s.rejected:
                 continue
@@ -126,6 +143,9 @@ class Tracker:
                 s.seen_evictions.add(ev.get("lastTransitionTime"))
                 s.evictions += 1
                 s.admitted_at = None
+                pre = conds.get("Preempted", {})
+                reason = pre.get("reason") if pre.get("status") == "True" else None
+                s.eviction_reasons.append(reason or ev.get("reason") or "unknown")
             admitted = conds.get("Admitted", {}).get("status") == "True"
             if admitted:
                 if s.admitted_at is None:
@@ -134,6 +154,7 @@ class Tracker:
                 else:
                     s.run_s += dt
                     self.gpu_seconds += dt * s.job.gpus
+                    step_gpus += s.job.gpus
                 if unscheduled_pods.get(s.job.id, 0) > 0:
                     s.partial_polls += 1
                     s.partial = s.partial or s.partial_polls >= 3
@@ -144,6 +165,10 @@ class Tracker:
                     done.append(s)
             else:
                 s.admitted_at = None
+                waiting = True
+        if waiting:
+            self.busy_seconds += dt
+            self.busy_gpu_seconds += dt * step_gpus
         return done
 
     def finished(self) -> bool:
@@ -166,10 +191,51 @@ class Tracker:
             "never_admitted": sum(s.first_admitted_at is None and not s.rejected for s in states),
             "rejected_by_preflight": sum(bool(s.rejected) for s in states),
             "evictions": sum(s.evictions for s in states),
+            "evictions_by_priority_reason": _count(
+                f"{s.job.priority}/{r}" for s in states for r in s.eviction_reasons),
+            "nonpreemptible_borrow_evictions": sum(
+                r in BORROW_PREEMPTION_REASONS for s in states if s.job.priority != "preemptible"
+                for r in s.eviction_reasons),
             "partial_placements": sum(s.partial for s in states),
             "allocation_ratio": round(self.gpu_seconds / (self.capacity * elapsed), 3) if elapsed else 0,
+            "allocation_ratio_busy": (round(self.busy_gpu_seconds / (self.capacity * self.busy_seconds), 3)
+                                      if self.busy_seconds else None),
+            "busy_h": round(self.busy_seconds / 3600, 1),
+            "sim_elapsed_h": round(elapsed / 3600, 1),
             "queue_wait_by_priority": waits,
         }
+
+
+def _count(items: Iterable[str]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for i in items:
+        out[i] = out.get(i, 0) + 1
+    return dict(sorted(out.items()))
+
+
+def evaluate(report: dict[str, Any], criteria: dict[str, float] | None = None) -> dict[str, Any]:
+    """Score a replay report against the ADR 0004 pass criteria."""
+    c = {**CRITERIA, **(criteria or {})}
+    p90 = report["queue_wait_by_priority"].get("standard", {}).get("p90_h")
+    busy = report.get("allocation_ratio_busy")
+    checks = {
+        "partial_placements": (report["partial_placements"], f"<= {c['partial_placements_max']}",
+                               report["partial_placements"] <= c["partial_placements_max"]),
+        "p90_wait_standard_h": (p90, f"< {c['p90_wait_standard_h_max']}",
+                                p90 is not None and p90 < c["p90_wait_standard_h_max"]),
+        # No queue ever formed: allocation can't be judged, and isn't the bottleneck.
+        "allocation_ratio_busy": (busy, f">= {c['allocation_ratio_busy_min']}",
+                                  busy is None or busy >= c["allocation_ratio_busy_min"]),
+        "never_admitted": (report["never_admitted"], f"<= {c['never_admitted_max']}",
+                           report["never_admitted"] <= c["never_admitted_max"]),
+        "nonpreemptible_borrow_evictions": (
+            report["nonpreemptible_borrow_evictions"], f"<= {c['nonpreemptible_borrow_evictions_max']}",
+            report["nonpreemptible_borrow_evictions"] <= c["nonpreemptible_borrow_evictions_max"]),
+    }
+    return {
+        "pass": all(ok for _, _, ok in checks.values()),
+        "checks": {k: {"value": v, "target": t, "pass": ok} for k, (v, t, ok) in checks.items()},
+    }
 
 
 def run(kube, cfg: dict, jobs: list[TraceJob], speed: float = 600, poll_s: float = 5,
