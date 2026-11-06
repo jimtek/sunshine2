@@ -154,7 +154,9 @@ def cmd_trace(args, cfg) -> int:
 def cmd_replay(args, cfg) -> int:
     with open(args.trace) as fh:
         jobs = replay.read_trace(fh.read())
-    report = replay.run(Kubectl(args.context), cfg, jobs, speed=args.speed, poll_s=args.poll)
+    max_sim_s = args.max_sim_days * 86400 if args.max_sim_days else None
+    report = replay.run(Kubectl(args.context), cfg, jobs, speed=args.speed, poll_s=args.poll,
+                        max_sim_s=max_sim_s)
     criteria = None
     if args.criteria:
         with open(args.criteria) as fh:
@@ -217,6 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--speed", type=float, default=600, help="simulated seconds per real second")
     s.add_argument("--poll", type=float, default=5, help="real seconds between polls")
     s.add_argument("--out", help="write the JSON report here too")
+    s.add_argument("--max-sim-days", type=float,
+                   help="stop after this much simulated time (default: 3x the trace's span)")
     s.add_argument("--criteria", help="YAML overriding the ADR 0004 pass criteria")
     s.add_argument("--check", action="store_true", help="exit 1 if the ADR 0004 criteria fail")
     s.set_defaults(fn=cmd_replay)

@@ -247,8 +247,10 @@ def run(kube, cfg: dict, jobs: list[TraceJob], speed: float = 600, poll_s: float
     horizon = max_sim_s or (max(j.submit_s + j.runtime_s for j in jobs) * 3 if jobs else 0)
     start = clock()
     now = 0.0
-    namespaces = list(cfg["teams"])
+    polls = 0
+    namespaces = set(cfg["teams"])
     while not tracker.finished() and now <= horizon:
+        polls += 1
         now = (clock() - start) * speed
         for s in tracker.due(now):
             spec = spec_for(s.job)
@@ -265,21 +267,29 @@ def run(kube, cfg: dict, jobs: list[TraceJob], speed: float = 600, poll_s: float
             kube.delete("service", name, s.job.team)
         sleep(poll_s)
     report = tracker.report(now)
-    log(f"replay finished at sim {now / 3600:.1f}h")
+    # Measurement resolution: simulated time between polls (queue waits are
+    # only known to within this).
+    report["sim_s_per_poll"] = round(now / (polls - 1)) if polls > 1 else None
+    report["stopped_at_horizon"] = not tracker.finished()
+    log(f"replay finished at sim {now / 3600:.1f}h after {polls} polls")
     return report
 
 
-def _poll(kube, namespaces: list[str]) -> tuple[dict[str, dict], dict[str, int]]:
+def _poll(kube, namespaces: set[str]) -> tuple[dict[str, dict], dict[str, int]]:
+    """Two cluster-wide reads per poll, so polling stays cheap at high speed."""
     workloads: dict[str, dict] = {}
     unscheduled: dict[str, int] = {}
-    for ns in namespaces:
-        for wl in kube.get_json(["workloads.kueue.x-k8s.io", "-n", ns]).get("items", []):
-            for ref in wl["metadata"].get("ownerReferences", []):
-                if ref.get("kind") == "Job" and ref["name"].startswith("replay-"):
-                    workloads[ref["name"][len("replay-"):]] = wl
-        for pod in kube.get_json(["pods", "-n", ns, "-l", "project=replay"]).get("items", []):
-            conds = {c["type"]: c.get("status") for c in pod.get("status", {}).get("conditions", [])}
-            if conds.get("PodScheduled") == "False":
-                jid = pod["metadata"]["labels"].get("experiment-id", "")
-                unscheduled[jid] = unscheduled.get(jid, 0) + 1
+    for wl in kube.get_json(["workloads.kueue.x-k8s.io", "-A"]).get("items", []):
+        if wl["metadata"].get("namespace") not in namespaces:
+            continue
+        for ref in wl["metadata"].get("ownerReferences", []):
+            if ref.get("kind") == "Job" and ref["name"].startswith("replay-"):
+                workloads[ref["name"][len("replay-"):]] = wl
+    for pod in kube.get_json(["pods", "-A", "-l", "project=replay"]).get("items", []):
+        if pod["metadata"].get("namespace") not in namespaces:
+            continue
+        conds = {c["type"]: c.get("status") for c in pod.get("status", {}).get("conditions", [])}
+        if conds.get("PodScheduled") == "False":
+            jid = pod["metadata"]["labels"].get("experiment-id", "")
+            unscheduled[jid] = unscheduled.get(jid, 0) + 1
     return workloads, unscheduled

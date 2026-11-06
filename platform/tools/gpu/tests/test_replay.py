@@ -63,10 +63,11 @@ class FakeKube:
 
     def get_json(self, args):
         if args[0].startswith("workloads"):
-            ns = args[2]
-            return {"items": [{"metadata": {"ownerReferences": [{"kind": "Job", "name": n}]},
+            assert args[1] == "-A"
+            return {"items": [{"metadata": {"namespace": j["metadata"]["namespace"],
+                                            "ownerReferences": [{"kind": "Job", "name": n}]},
                                "status": {"conditions": [{"type": "Admitted", "status": "True"}]}}
-                              for n, j in self.jobs.items() if j["metadata"]["namespace"] == ns]}
+                              for n, j in self.jobs.items()]}
         return {"items": []}
 
 
@@ -79,6 +80,7 @@ def test_driver_runs_trace_to_completion(cfg):
                         log=lambda *_: None)
     assert report["finished"] == 20 and report["rejected_by_preflight"] == 0
     assert len(kube.deleted) == 20
+    assert report["sim_s_per_poll"] == 3600 and not report["stopped_at_horizon"]
 
 
 def _preempted(evicted_at, reason):

@@ -23,7 +23,9 @@ Kueue on EKS, configured from `config/platform.yaml`:
 
 ## Test (how this gets accepted or rejected)
 
-Run `sim/smoke.sh` and a full-week replay on the simulation cluster:
+Run `sim/smoke.sh` and a full-week replay on the simulation cluster. CI does
+this in `.github/workflows/platform-replay.yml` (on changes to the scheduling
+setup, or by hand with a real trace); the job summary shows the verdict. By hand:
 
 ```bash
 gpu trace --jobs 300 --days 7 > week.csv        # or a real week from Phase 0 logs
