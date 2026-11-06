@@ -1,0 +1,11 @@
+# Copy to config/accounts.yaml (git-ignored) and fill in real IDs.
+# The inventory tool assumes `role_name` in each account, read-only.
+role_name: FleetInventoryReadOnly
+regions: [us-east-1]
+accounts:
+  - name: research
+    id: "111111111111"
+  - name: partner
+    id: "222222222222"
+  - name: platform-test
+    id: "333333333333"
