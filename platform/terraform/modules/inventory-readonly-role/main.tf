@@ -35,7 +35,7 @@ data "aws_iam_policy_document" "trust" {
 
 data "aws_iam_policy_document" "read" {
   statement {
-    sid     = "Ec2CapacityRead"
+    sid = "Ec2CapacityRead"
     actions = [
       "ec2:DescribeInstances",
       "ec2:DescribeInstanceTypes",
