@@ -76,7 +76,7 @@ module "eks" {
 
   access_entries = merge(
     { for i, arn in var.admin_role_arns : "admin-${i}" => {
-      principal_arn       = arn
+      principal_arn = arn
       policy_associations = {
         admin = {
           policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
@@ -102,9 +102,9 @@ output "oidc_provider_arn" { value = module.eks.oidc_provider_arn }
 
 # Node role shared by the GPU node groups (EKS adds their access entries).
 resource "aws_iam_role" "gpu_nodes" {
-  name               = "${var.name}-gpu-nodes"
+  name = "${var.name}-gpu-nodes"
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
+    Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
