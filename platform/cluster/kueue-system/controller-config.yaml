@@ -1,0 +1,43 @@
+# Kueue controller configuration (replaces the release's kueue-manager-config).
+# Pinned with kueue_version in config/platform.yaml; re-check against the
+# release defaults on every upgrade.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kueue-manager-config
+  namespace: kueue-system
+data:
+  controller_manager_config.yaml: |
+    apiVersion: config.kueue.x-k8s.io/v1beta1
+    kind: Configuration
+    health:
+      healthProbeBindAddress: :8081
+    metrics:
+      bindAddress: :8443
+      enableClusterQueueResources: true
+    webhook:
+      port: 9443
+    leaderElection:
+      leaderElect: true
+      resourceName: c1f6bfd2.kueue.x-k8s.io
+    manageJobsWithoutQueueName: false
+    # All-or-nothing: if a gang's pods aren't all running within the timeout,
+    # release the quota and requeue, instead of holding GPUs half-placed.
+    waitForPodsReady:
+      enable: true
+      timeout: 10m
+      blockAdmission: true
+      requeuingStrategy:
+        timestamp: Eviction
+        backoffLimitCount: 5
+    # Fair sharing across the research cohort, weighted equally by default.
+    fairSharing:
+      enable: true
+      preemptionStrategies: [LessThanOrEqualToFinalShare, LessThanInitialShare]
+    integrations:
+      frameworks:
+        - batch/job
+        - jobset.x-k8s.io/jobset
+        - kubeflow.org/pytorchjob
+        - ray.io/rayjob
+        - ray.io/raycluster

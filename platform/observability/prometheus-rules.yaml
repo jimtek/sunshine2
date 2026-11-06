@@ -1,0 +1,117 @@
+# Recording rules and alerts for the Phase 1 metrics (see "Observability and
+# metrics" in the build plan). For kube-prometheus-stack's Prometheus Operator.
+#
+# Requires:
+#  - kube-state-metrics with
+#      --metric-labels-allowlist=pods=[team,project,experiment-id],nodes=[platform.gpu/pool]
+#  - DCGM exporter with Kubernetes pod mapping, relabelled to `namespace`/`pod`
+#  - Kueue metrics scraped (ServiceMonitor from the Kueue release)
+#
+# Severity: page = someone must act now; ticket = next business day;
+# info = goes to the researcher channel. Only `page` wakes anyone.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gpu-platform
+  namespace: monitoring
+spec:
+  groups:
+    - name: gpu-platform.recording
+      interval: 1m
+      rules:
+        # Capacity and allocation
+        - record: platform:gpu_capacity:sum_by_pool
+          expr: |
+            sum by (label_platform_gpu_pool) (
+              kube_node_status_allocatable{resource="nvidia_com_gpu"}
+              * on (node) group_left (label_platform_gpu_pool) kube_node_labels
+            )
+        - record: platform:gpu_allocated:sum_by_flavor
+          expr: sum by (flavor) (kueue_cluster_queue_resource_usage{resource="nvidia.com/gpu"})
+        - record: platform:gpu_allocated:sum_by_team
+          expr: sum by (cluster_queue) (kueue_cluster_queue_resource_usage{resource="nvidia.com/gpu"})
+        - record: platform:gpu_allocation:ratio
+          expr: sum(platform:gpu_allocated:sum_by_flavor) / sum(platform:gpu_capacity:sum_by_pool)
+
+        # Utilization while allocated
+        - record: platform:gpu_utilization:avg
+          expr: avg(DCGM_FI_DEV_GPU_UTIL{pod!=""}) / 100
+        - record: platform:gpu_utilization:avg_by_experiment
+          expr: |
+            avg by (namespace, label_project, label_experiment_id) (
+              DCGM_FI_DEV_GPU_UTIL{pod!=""}
+              * on (namespace, pod) group_left (label_project, label_experiment_id) kube_pod_labels
+            ) / 100
+
+        # GPUs held per experiment (basis for GPU-hours and cost in Phase 3)
+        - record: platform:gpus_held:sum_by_experiment
+          expr: |
+            sum by (namespace, label_project, label_experiment_id) (
+              kube_pod_container_resource_requests{resource="nvidia_com_gpu"}
+              * on (namespace, pod) group_left (label_project, label_experiment_id) kube_pod_labels
+              * on (namespace, pod) group_left () (kube_pod_status_phase{phase="Running"} == 1)
+            )
+
+        # Queues
+        - record: platform:pending_workloads:sum_by_team
+          expr: sum by (cluster_queue) (kueue_pending_workloads)
+        - record: platform:queue_wait_seconds:p90_by_team
+          expr: |
+            histogram_quantile(0.9,
+              sum by (le, cluster_queue) (rate(kueue_admission_wait_time_seconds_bucket[1h])))
+        - record: platform:evictions:rate1h_by_reason
+          expr: sum by (cluster_queue, reason) (rate(kueue_evicted_workloads_total[1h]))
+
+        # Job success (team namespaces only). User-code vs infrastructure split
+        # arrives with the failure classifier in Phase 2.
+        - record: platform:job_success:ratio
+          expr: |
+            count(kube_job_status_condition{namespace=~"team-.*", condition="Complete", status="true"} == 1)
+            /
+            count(kube_job_status_condition{namespace=~"team-.*", condition=~"Complete|Failed", status="true"} == 1)
+
+    - name: gpu-platform.alerts
+      rules:
+        - alert: KueueDown
+          expr: absent(up{job=~".*kueue.*"} == 1)
+          for: 5m
+          labels: {severity: page}
+          annotations:
+            summary: Kueue controller is down; no GPU jobs are being admitted.
+            runbook: docs/runbooks/kueue-down.md
+        - alert: GpuXidError
+          expr: DCGM_FI_DEV_XID_ERRORS > 0
+          for: 1m
+          labels: {severity: ticket}
+          annotations:
+            summary: "XID {{ $value }} on {{ $labels.Hostname }} GPU {{ $labels.gpu }}"
+            runbook: docs/runbooks/gpu-xid.md
+        - alert: AcceleratedHardwareNotReady
+          expr: kube_node_status_condition{condition="AcceleratedHardwareReady", status="false"} == 1
+          for: 5m
+          labels: {severity: ticket}
+          annotations:
+            summary: "{{ $labels.node }} reports AcceleratedHardwareReady=False"
+            runbook: docs/runbooks/gpu-xid.md
+        - alert: GpuNodeNotReady
+          expr: |
+            (kube_node_status_condition{condition="Ready", status="true"} == 0)
+            * on (node) group_left () (kube_node_labels{label_platform_gpu_pool!=""})
+          for: 10m
+          labels: {severity: ticket}
+          annotations:
+            summary: "GPU node {{ $labels.node }} NotReady for 10m"
+        - alert: QueueWaitHigh
+          expr: platform:queue_wait_seconds:p90_by_team > 4 * 3600
+          for: 1h
+          labels: {severity: ticket}
+          annotations:
+            summary: "P90 queue wait for {{ $labels.cluster_queue }} is over 4h"
+        - alert: AllocatedGpusIdle
+          expr: |
+            platform:gpu_utilization:avg_by_experiment < 0.10
+            and on (namespace, label_experiment_id) platform:gpus_held:sum_by_experiment > 0
+          for: 2h
+          labels: {severity: info}
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.label_experiment_id }} holds GPUs at under 10% utilization"

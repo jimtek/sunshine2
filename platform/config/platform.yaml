@@ -1,0 +1,73 @@
+# GPU Fleet Platform — Phase 1 pilot configuration (single source of truth).
+#
+# Kueue manifests (cluster/kueue/), simulation nodes (sim/) and the `gpu`
+# submit tool's preflight checks are all derived from this file:
+#   fleetops render --platform config/platform.yaml
+# Team names and shares are Phase 0 defaults (equal shares, placeholder names).
+schema_version: 1
+
+kueue_version: v0.19.2          # pinned; upgrades are proven on the pilot pool first
+cohort: research
+
+required_labels: [team, project, experiment-id]
+
+# Capacity pools. Each becomes a Kueue ResourceFlavor; nodes carry
+# `platform.gpu/pool: <name>` and a matching NoSchedule taint.
+pools:
+  capacity-block:
+    instance_type: p5.48xlarge
+    gpus_per_node: 8
+    efa_per_node: 32
+    cpu_per_node: 188           # allocatable, after system reserve
+    memory_per_node: 1900Gi
+    nodes: 12                   # pilot size
+    driver_cuda_max: "12.8"
+    # Capacity Blocks can't be cancelled and terminate from 11:00 UTC on the
+    # final day. Jobs must finish (or checkpoint) before this.
+    ends_at: "2027-02-01T11:00:00Z"
+    drain_before_end: 2h
+  reserved:
+    instance_type: p5en.48xlarge
+    gpus_per_node: 8
+    efa_per_node: 16
+    cpu_per_node: 188
+    memory_per_node: 1900Gi
+    nodes: 12
+    driver_cuda_max: "12.8"
+  dev:
+    instance_type: p5.4xlarge
+    gpus_per_node: 1
+    efa_per_node: 0
+    cpu_per_node: 15
+    memory_per_node: 240Gi
+    nodes: 6
+    driver_cuda_max: "12.8"
+    max_runtime: 8h             # interactive / dev work only
+
+# Equal shares by default. `share` is the fraction of each pool's GPUs a team
+# gets as nominal quota; unused quota can be borrowed by others in the cohort.
+teams:
+  team-alpha: {share: 0.3333}
+  team-beta:  {share: 0.3333}
+  team-gamma: {share: 0.3334}
+
+priorities:
+  high:        {value: 1000, desc: "Deadline-bound runs, booked with the platform team"}
+  standard:    {value: 500,  desc: "Default for training jobs"}
+  preemptible: {value: 100,  desc: "Backfill; job must have passed a resume test"}
+default_priority: standard
+
+images:
+  allowed_registries:
+    - "*.dkr.ecr.*.amazonaws.com/"
+    - "nvcr.io/nvidia/"
+    - "public.ecr.aws/"
+
+data:
+  allowed_prefixes: ["s3://", "/fsx/"]
+  checkpoint_prefixes: ["s3://", "/fsx/checkpoints/"]
+
+jobs:
+  max_runtime: 72h
+  checkpoint_required_over: 1h  # jobs longer than this must set checkpoint_dir
+  termination_grace: 300s       # time to write a final checkpoint on preemption

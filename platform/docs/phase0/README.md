@@ -7,6 +7,13 @@ the account model.
 ADR 0003 accepted, every section of `config/fleet-defaults.yaml` marked
 `confirmed` or `corrected`, and the baseline report published.
 
+## Status (2026-11-06)
+
+Phase 1 started on planning defaults before the Phase 0 measurements, by
+decision of the platform owner. ADRs 0002 and 0003 are accepted on those
+defaults. The Phase 0 work below still runs in parallel; anything it finds
+that fires a `revisit_if` trigger is fed back into Phase 1.
+
 ## Deliverables
 
 | # | Deliverable | How | Output | Week |

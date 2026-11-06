@@ -9,9 +9,12 @@ from pathlib import Path
 
 import yaml
 
-from . import baseline, config, inventory, triggers
+from . import baseline, config, inventory, render, triggers
+from . import platform as pf
 
-DEFAULT_CONFIG = Path(__file__).resolve().parents[4] / "config" / "fleet-defaults.yaml"
+PLATFORM_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_CONFIG = PLATFORM_ROOT / "config" / "fleet-defaults.yaml"
+DEFAULT_PLATFORM = PLATFORM_ROOT / "config" / "platform.yaml"
 
 
 def _load_any(path: str) -> dict:
@@ -66,6 +69,19 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render(args: argparse.Namespace) -> int:
+    cfg = pf.load(args.platform)
+    root = Path(args.root)
+    if args.check:
+        stale = render.drift(cfg, root)
+        for rel in stale:
+            print(f"STALE {rel} (run: fleetops render)")
+        return 1 if stale else 0
+    for rel in render.write(cfg, root):
+        print(f"wrote {rel}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="fleetops", description=__doc__)
     p.add_argument("--config", default=str(DEFAULT_CONFIG), help="fleet-defaults.yaml path")
@@ -88,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--measurements", required=True, help="YAML/JSON of measured values")
     s.add_argument("--out")
     s.set_defaults(fn=cmd_baseline)
+
+    s = sub.add_parser("render", help="render Kueue manifests and sim nodes from platform.yaml")
+    s.add_argument("--platform", default=str(DEFAULT_PLATFORM))
+    s.add_argument("--root", default=str(PLATFORM_ROOT), help="platform/ directory to write into")
+    s.add_argument("--check", action="store_true", help="fail if committed files differ")
+    s.set_defaults(fn=cmd_render)
     return p
 
 

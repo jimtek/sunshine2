@@ -1,0 +1,14 @@
+kube-state-metrics:
+  metricLabelsAllowlist:
+    - pods=[team,project,experiment-id]
+    - nodes=[platform.gpu/pool]
+prometheus:
+  prometheusSpec:
+    retention: 30d
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+grafana:
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard

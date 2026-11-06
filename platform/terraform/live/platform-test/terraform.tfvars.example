@@ -1,0 +1,5 @@
+admin_role_arns     = ["arn:aws:iam::333333333333:role/gpu-platform-admin"]
+budget_alert_emails = ["gpu-platform@example.com"]
+expires_at          = "2027-03-31"
+# researcher_role_arns = { "team-alpha" = "arn:aws:iam::333333333333:role/team-alpha-researchers" }
+# dev_gpu_nodes = 1    # week 9 smoke test only
