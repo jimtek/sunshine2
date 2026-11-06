@@ -20,7 +20,7 @@ and real-GPU tests pass.
 
 | Stage | Weeks | How |
 |---|---|---|
-| Simulation | 5-8 | `sim/up.sh`, `sim/smoke.sh`, full replay (ADR 0004). Runs in CI on every change. |
+| Simulation | 5-8 | `sim/up.sh`, `sim/smoke.sh` (CI on every change); full-week replay (ADR 0004) in the `platform-replay` workflow. |
 | GPU smoke test | 9 | `terraform apply` platform-test with `dev_gpu_nodes=1`; install add-ons; submit the dev example; check DCGM metrics in Grafana; capture an evidence bundle by hand; then `dev_gpu_nodes=0`. |
 | Real capacity | 10-12 | Point `reserved_capacity_reservation_id` at held capacity; multi-node example with EFA; FSx throughput; Capacity Block end-of-block drain. |
 

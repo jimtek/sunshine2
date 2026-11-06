@@ -1,0 +1,103 @@
+name: platform-replay
+
+# Full-week scheduler replay on the simulation cluster (ADR 0004).
+# Separate from platform-ci because it takes ~35 minutes. It runs when the
+# scheduling setup or the replay itself changes, and on demand (e.g. against
+# a real week of jobs from Phase 0 logs).
+on:
+  workflow_dispatch:
+    inputs:
+      trace:
+        description: "Trace CSV in the repo (blank = synthetic week)"
+        default: ""
+      jobs:
+        description: "Synthetic trace: number of jobs"
+        default: "300"
+      seed:
+        description: "Synthetic trace: random seed"
+        default: "1"
+      speed:
+        description: "Simulated seconds per real second"
+        default: "600"
+  push:
+    paths:
+      - "platform/config/platform.yaml"
+      - "platform/cluster/kueue/**"
+      - "platform/cluster/kueue-system/**"
+      - "platform/sim/**"
+      - "platform/tools/gpu/src/gpujob/replay.py"
+      - ".github/workflows/platform-replay.yml"
+
+concurrency:
+  group: platform-replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay-week:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      OUT: ${{ github.workspace }}/replay-out
+      TRACE: ${{ inputs.trace }}
+      JOBS: ${{ inputs.jobs || '300' }}
+      SEED: ${{ inputs.seed || '1' }}
+      SPEED: ${{ inputs.speed || '600' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e 'platform/tools/gpu'
+      - uses: helm/kind-action@v1.10.0
+        with:
+          version: v0.25.0
+          cluster_name: gpu-sim
+          config: platform/sim/kind-config.yaml
+      - run: platform/sim/up.sh
+
+      - name: Build the trace
+        run: |
+          mkdir -p "$OUT"
+          if [ -n "$TRACE" ]; then
+            cp "$TRACE" "$OUT/trace.csv"
+          else
+            gpu trace --jobs "$JOBS" --days 7 --seed "$SEED" > "$OUT/trace.csv"
+          fi
+          echo "jobs in trace: $(($(wc -l < "$OUT/trace.csv") - 1))"
+
+      # 7 simulated days plus up to 5 for the queue to drain: ~29 min at speed 600.
+      - name: Replay the week and score it against ADR 0004
+        run: |
+          gpu --context kind-gpu-sim replay "$OUT/trace.csv" \
+            --speed "$SPEED" --poll 1 --max-sim-days 12 \
+            --out "$OUT/replay-report.json" --check 2> >(tee "$OUT/verdict.txt" >&2)
+
+      - name: Summary
+        if: always()
+        run: |
+          [ -f "$OUT/replay-report.json" ] || { echo "No report produced." >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          python3 - "$OUT/replay-report.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          v = r["adr_0004"]
+          print(f"## ADR 0004 replay: {'PASS' if v['pass'] else 'FAIL'}\n")
+          print("| Measure | Value | Target | |\n|---|---|---|---|")
+          for k, c in v["checks"].items():
+              print(f"| {k} | {c['value']} | {c['target']} | {'✅' if c['pass'] else '❌'} |")
+          print(f"\n{r['jobs']} jobs, {r['finished']} finished, {r['evictions']} evictions, "
+                f"{r['sim_elapsed_h']} h simulated, {r['sim_s_per_poll']} s simulated per poll"
+                f"{', stopped at horizon' if r['stopped_at_horizon'] else ''}.\n")
+          print("```json\n" + json.dumps(r, indent=2) + "\n```")
+          PY
+
+      - name: Collect cluster state
+        if: always()
+        run: |
+          kubectl get clusterqueues -o wide > "$OUT/clusterqueues.txt" 2>&1 || true
+          kubectl get workloads -A -o yaml > "$OUT/workloads.yaml" 2>&1 || true
+          kubectl -n kueue-system logs deploy/kueue-controller-manager --tail=2000 > "$OUT/kueue.log" 2>&1 || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-week
+          path: replay-out
