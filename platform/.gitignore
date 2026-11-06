@@ -1,0 +1,9 @@
+config/accounts.yaml
+out/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+__pycache__/
+*.egg-info/
+.pytest_cache/

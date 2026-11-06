@@ -1,0 +1,17 @@
+# Every support ticket gets exactly one cause code. Reviewed monthly; a code
+# seen three times in a month needs a named fix (check, tool change or doc).
+# `fix_type` is where the fix most likely lands.
+codes:
+  QUOTA:      {desc: "Quota or capacity unavailable / unclear",            owner: platform, fix_type: preflight}
+  QUEUE_WAIT: {desc: "Job pending longer than expected",                    owner: platform, fix_type: tool}
+  IMAGE:      {desc: "Container image, CUDA or driver mismatch",            owner: platform, fix_type: preflight}
+  DATA_PATH:  {desc: "Dataset or storage path not reachable / slow",        owner: platform, fix_type: preflight}
+  CHECKPOINT: {desc: "Checkpoint missing, failed to save or resume",        owner: platform, fix_type: template}
+  TOPOLOGY:   {desc: "Multi-node placement, EFA or NCCL problems",          owner: platform, fix_type: preflight}
+  HW_FAULT:   {desc: "GPU / node hardware fault (XID, DCGM, ECC)",          owner: platform, fix_type: automation}
+  USER_CODE:  {desc: "Failure in the researcher's own code",                owner: researcher, fix_type: doc}
+  ACCESS:     {desc: "Identity, permissions, onboarding",                   owner: central,  fix_type: doc}
+  NETWORK:    {desc: "Network connectivity outside the cluster",            owner: central,  fix_type: escalate}
+  COST:       {desc: "Cost, budget or attribution question",                owner: platform, fix_type: tool}
+  HOWTO:      {desc: "How do I ... (no fault)",                             owner: platform, fix_type: doc}
+  OTHER:      {desc: "Doesn't fit; propose a new code at monthly review",   owner: platform, fix_type: review}

@@ -1,0 +1,2 @@
+account_name          = "research"
+inventory_runner_arns = ["arn:aws:iam::444444444444:role/gpu-platform-ops"]

@@ -1,0 +1,11 @@
+# Phase 0 measured values. Leave a metric out (or null) until measured; the
+# report lists it as not-measured. Ratios are 0-1. Note the source and window.
+window: "TBD (30 days)"
+# allocation_ratio: 0.0
+# gpu_utilization: 0.0
+# p90_queue_wait_standard: 0.0     # hours
+# job_success_rate: 0.0
+# fault_to_quarantine: 0           # minutes
+# quarantine_to_case: 0            # minutes
+# tickets_per_researcher: 0.0      # per month
+# cost_attribution: 0.0

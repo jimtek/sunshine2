@@ -1,0 +1,92 @@
+# GPU Fleet Platform — Phase 0 planning defaults.
+#
+# These are planning assumptions, not facts about the fleet. Work proceeds on
+# them until a `revisit_if` trigger fires. Phase 0 confirms or corrects each
+# one; record the outcome in `status` and link the evidence.
+#
+# status: assumed | confirmed | corrected
+schema_version: 1
+
+fleet:
+  status: assumed
+  gpus: {min: 1000, max: 2000}
+  gpus_per_instance: 8
+  vendor: nvidia
+  # Two families expected; the inventory tool reports what actually exists.
+  instance_families: [p5, p5en]
+  primary_region: us-east-1
+  secondary_regions: []
+  revisit_if: "A second region is required, or the fleet will exceed 2,048 GPUs"
+
+accounts:
+  status: assumed
+  # Logical names; real account IDs live in config/accounts.yaml (not committed).
+  model:
+    - name: research
+      purpose: Production research training and interactive work
+    - name: partner
+      purpose: External compute and lab partners, isolated from internal data
+    - name: platform-test
+      purpose: Platform development, upgrades and real-GPU smoke tests
+  inventory_role_name: FleetInventoryReadOnly
+  decision_record: docs/decisions/0002-account-model.md
+
+capacity_mix:
+  status: assumed
+  baseline: longer-term reservations (ODCR / savings plans)
+  planned_large_runs: capacity-blocks
+  small_dev_work: on-demand
+  capacity_block_org_limit_instances: 256   # AWS limit, ~2,048 GPUs on 8-GPU instances
+  revisit_if: "Queue forecasts show sustained demand above the baseline, or blocks sit idle"
+
+workload_mix:
+  status: assumed
+  batch_distributed_training_share: 0.80
+  interactive_dev_share: 0.20
+  slurm_strategy: submit-wrapper   # not a Slurm cluster
+  revisit_if: "More than about a third of researchers depend on Slurm scripts they can't port"
+  slurm_dependence_threshold: 0.33
+
+checkpointing:
+  status: assumed
+  assume_reliable_resume: false
+  preemptible_backfill_requires_resume_test: true
+  revisit_if: "Phase 0 finds most jobs already resume cleanly"
+
+staffing:
+  status: assumed
+  engineers: 3
+  on_call: business-hours
+  after_hours: automated quarantine; scheduled cover for large-run windows
+  decision_record: docs/decisions/0003-support-ownership.md
+  revisit_if: "The team is smaller, or research deadlines need overnight response"
+
+shared_services:
+  status: assumed
+  central_owns: [identity, network-connectivity, security-baselines, cost-data-feeds]
+  platform_owns: [gpu-clusters, scheduling, fleet-observability]
+  revisit_if: "Central policy requires its own clusters, images or monitoring stack"
+
+partner_isolation:
+  status: assumed
+  separate_accounts: true
+  least_privilege_roles: true
+  per_partner_storage: true
+  default_internal_data_access: false
+  audit_logging: true
+  revisit_if: "Contracts or legal review set stricter terms, or a partner needs shared internal data"
+
+# Proposed targets from the Goals section. Phase 0 measures a baseline, then
+# these are reset. `direction` says which way is good.
+targets:
+  allocation_ratio:        {target: 0.85, direction: higher, unit: ratio,   desc: "Allocated GPU-hours / available GPU-hours"}
+  gpu_utilization:         {target: 0.70, direction: higher, unit: ratio,   desc: "Mean GPU utilization while allocated"}
+  p90_queue_wait_standard: {target: 4.0,  direction: lower,  unit: hours,   desc: "P90 queue wait, standard priority"}
+  job_success_rate:        {target: 0.95, direction: higher, unit: ratio,   desc: "Job success rate, excluding user-code failures"}
+  fault_to_quarantine:     {target: 15,   direction: lower,  unit: minutes, desc: "Time from fault to node quarantined"}
+  quarantine_to_case:      {target: 60,   direction: lower,  unit: minutes, desc: "Time from quarantine to AWS support case filed"}
+  tickets_per_researcher:  {target: null, direction: lower,  unit: per-month, desc: "Tickets per active researcher per month (target: baseline -50% in 6 months)", relative_reduction: 0.50}
+  cost_attribution:        {target: 0.95, direction: higher, unit: ratio,   desc: "Share of GPU cost mapped to an experiment"}
+
+# Labels every job must carry from day one (enforced at admission in Phase 1).
+required_job_labels: [team, project, experiment-id]
