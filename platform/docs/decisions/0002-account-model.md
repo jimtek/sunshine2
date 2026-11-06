@@ -1,6 +1,6 @@
 # 0002. AWS account model
 
-- Status: proposed (to be accepted at the Phase 0 exit gate)
+- Status: accepted on planning defaults (2026-11-06); revisit when Phase 0 data arrives
 - Date: 2026-11-06
 - Phase: 0
 

@@ -7,25 +7,58 @@ on:
     paths: ["platform/**", ".github/workflows/platform-ci.yml"]
 
 jobs:
-  fleetops:
+  python:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: platform/tools/fleetops
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e '.[dev]'
-      - run: pytest -q
-      - run: fleetops --config ../../config/fleet-defaults.yaml check-config
+      - run: pip install -e 'platform/tools/fleetops[dev]' -e 'platform/tools/gpu[dev]'
+      - run: pytest -q platform/tools/fleetops
+      - run: pytest -q platform/tools/gpu
+      - run: fleetops check-config
+      - name: Rendered manifests match config/platform.yaml
+        run: fleetops render --check
+      - run: gpu preflight platform/tools/gpu/examples/multi-node-training.yaml
 
   terraform:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        stack: [phase0, platform-test]
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
       - run: terraform fmt -check -recursive platform/terraform
       - run: terraform init -backend=false && terraform validate
-        working-directory: platform/terraform/live/phase0
+        working-directory: platform/terraform/live/${{ matrix.stack }}
+
+  simulation:
+    runs-on: ubuntu-latest
+    needs: python
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e 'platform/tools/gpu'
+      - uses: helm/kind-action@v1.10.0
+        with:
+          version: v0.25.0
+          cluster_name: gpu-sim
+          config: platform/sim/kind-config.yaml
+      - run: platform/sim/up.sh
+      - run: platform/sim/smoke.sh
+        env:
+          SIM_OUT: ${{ runner.temp }}/sim
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-results
+          path: ${{ runner.temp }}/sim
+      - if: failure()
+        run: |
+          kubectl get clusterqueues,workloads -A -o wide || true
+          kubectl -n kueue-system logs deploy/kueue-controller-manager --tail=200 || true

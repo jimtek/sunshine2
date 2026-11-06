@@ -1,0 +1,13 @@
+# Platform objects applied on top of a Kueue install (see sim/up.sh, and the
+# EKS bootstrap in Phase 1 week 9+). Kueue itself is installed from its pinned
+# release manifest first.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kueue/priorities.yaml
+  - kueue/resource-flavors.yaml
+  - kueue/team-namespaces.yaml
+  - kueue/cluster-queues.yaml
+  - policy/require-job-labels.yaml
+  - rbac/gpu-researcher-role.yaml
+  - rbac/team-bindings.yaml

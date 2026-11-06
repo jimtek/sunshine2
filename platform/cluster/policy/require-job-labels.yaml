@@ -1,0 +1,57 @@
+# Reject GPU work that can't be attributed or that bypasses Kueue.
+# Applies in namespaces labelled platform.gpu/research=true (the team
+# namespaces rendered from config/platform.yaml). Native CEL admission policy,
+# so no webhook to run (Kubernetes >= 1.30).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gpu-job-labels
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["jobs"]
+      - apiGroups: ["jobset.x-k8s.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE"]
+        resources: ["jobsets"]
+      - apiGroups: ["kubeflow.org"]
+        apiVersions: ["*"]
+        operations: ["CREATE"]
+        resources: ["pytorchjobs"]
+      - apiGroups: ["ray.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE"]
+        resources: ["rayjobs", "rayclusters"]
+  matchConditions:
+    # Child objects (e.g. Jobs created by a JobSet) are checked via their parent.
+    - name: top-level-only
+      expression: "!has(object.metadata.ownerReferences) || size(object.metadata.ownerReferences) == 0"
+  variables:
+    - name: labels
+      expression: "has(object.metadata.labels) ? object.metadata.labels : {}"
+  validations:
+    - expression: "['team', 'project', 'experiment-id'].all(k, k in variables.labels && variables.labels[k] != '')"
+      message: "GPU jobs need non-empty labels team, project and experiment-id. The `gpu submit` tool sets them for you."
+      reason: Invalid
+    - expression: "!('team' in variables.labels) || variables.labels['team'] == namespaceObject.metadata.labels['team']"
+      messageExpression: "'label team must match this namespace (' + namespaceObject.metadata.labels['team'] + ')'"
+      reason: Invalid
+    - expression: "'kueue.x-k8s.io/queue-name' in variables.labels"
+      message: "GPU jobs must be submitted through Kueue: set label kueue.x-k8s.io/queue-name (normally 'default')."
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: gpu-job-labels
+spec:
+  policyName: gpu-job-labels
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        platform.gpu/research: "true"
