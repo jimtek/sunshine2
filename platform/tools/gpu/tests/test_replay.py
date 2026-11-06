@@ -79,3 +79,51 @@ def test_driver_runs_trace_to_completion(cfg):
                         log=lambda *_: None)
     assert report["finished"] == 20 and report["rejected_by_preflight"] == 0
     assert len(kube.deleted) == 20
+
+
+def _preempted(evicted_at, reason):
+    wl = _wl(False, evicted_at)
+    wl["status"]["conditions"].append({"type": "Preempted", "status": "True", "reason": reason})
+    return wl
+
+
+def test_borrow_evictions_of_nonpreemptible_jobs_are_counted():
+    jobs = [replay.TraceJob("std", 0, "team-alpha", 8, 100, "standard"),
+            replay.TraceJob("bf", 0, "team-beta", 8, 100, "preemptible")]
+    t = replay.Tracker(jobs, capacity_gpus=16)
+    for s in t.due(0):
+        s.submitted_at = 0
+    t.observe(10, {"std": _wl(True), "bf": _wl(True)}, {})
+    t.observe(20, {"std": _preempted("e1", "InCohortReclaimWhileBorrowing"),
+                   "bf": _preempted("e2", "InCohortReclaimWhileBorrowing")}, {})
+    rep = t.report(20)
+    assert rep["evictions"] == 2
+    assert rep["nonpreemptible_borrow_evictions"] == 1
+    assert rep["evictions_by_priority_reason"] == {
+        "preemptible/InCohortReclaimWhileBorrowing": 1, "standard/InCohortReclaimWhileBorrowing": 1}
+
+
+def test_allocation_counts_only_while_jobs_wait():
+    jobs = [replay.TraceJob("a", 0, "team-alpha", 8, 1000, "standard"),
+            replay.TraceJob("b", 0, "team-beta", 8, 1000, "standard")]
+    t = replay.Tracker(jobs, capacity_gpus=16)
+    for s in t.due(0):
+        s.submitted_at = 0
+    t.observe(0, {"a": _wl(True), "b": _wl(False)}, {})
+    t.observe(100, {"a": _wl(True), "b": _wl(False)}, {})   # b waits; 8 of 16 GPUs busy
+    t.observe(200, {"a": _wl(True), "b": _wl(True)}, {})    # nobody waits: not counted
+    rep = t.report(200)
+    assert rep["busy_h"] == round(100 / 3600, 1)
+    assert rep["allocation_ratio_busy"] == 0.5
+
+
+def test_evaluate_against_adr_criteria():
+    base = {"partial_placements": 0, "never_admitted": 0, "nonpreemptible_borrow_evictions": 0,
+            "allocation_ratio_busy": 0.9, "queue_wait_by_priority": {"standard": {"p90_h": 3.5}}}
+    assert replay.evaluate(base)["pass"]
+    slow = {**base, "queue_wait_by_priority": {"standard": {"p90_h": 4.0}}}
+    v = replay.evaluate(slow)
+    assert not v["pass"] and not v["checks"]["p90_wait_standard_h"]["pass"]
+    assert replay.evaluate(slow, {"p90_wait_standard_h_max": 6})["pass"]
+    assert not replay.evaluate({**base, "allocation_ratio_busy": 0.8})["pass"]
+    assert replay.evaluate({**base, "allocation_ratio_busy": None})["pass"]
